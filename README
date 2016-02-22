@@ -1,5 +1,62 @@
 Mazewar: Multiplayer Peer to peer
 
+DESIGN DETAILS
+
+Chosen decentralized algorithm
+
+The Ricart and Agrawala algorithm will be used. Each client will run on a client handler thread and will include a Lamport clock (treated as a global counter, shared by all clients) and a queue for pending requests to access the critical section by other clients. This allows for correctness and starvation free. The drawback is that acknowledgements must be received from all members, increasing time delay. Compared to the token ring algorithm, the decentralized algorithm is fair since events are only created when required, rather than creating events in order based on an ID. 
+
+Dynamic Joining
+
+A naming service will be used to assist in dynamic joins, which will keep track of all present clients in a hashmap. All clients will have an associated ID. A new client registers itself with the naming service. The client then receives its ID, and the hashmap of other clients’ port and hostnames from the naming service. Based on this it will broadcast its ID, port and hostname to all other clients. It will then add other clients to its game and begin the game for itself. 
+
+Maintaining the game
+
+Features included to help maintain and synchronize the game are: 
+Lamport clocks: When a client wants events to occur, it must receive acknowledgements that its lamport clock is up to date from all clients before performing the event
+Event Broadcast: When a client wants an event to occur (ex. client keypress, client join, respawn), it must first, check its lamport clock by broadcasting its clock as previously described and second, broadcast the event to all clients including itself. 
+ClientMap: All clients must store a map of all other active clients
+Event Listener: Continually queue incoming events and update game screen
+Heartbeat: Clients will periodically ping all other clients to notify others that it is still present in the game. This is done by traversing through the ClientMap and sending out a heartbeat event to all clients
+
+Exiting the game
+
+A client exists by broadcasting a quit event to all clients. It will then remove itself from the naming service, while all other clients remove the quitting client’s ID from their client maps and remove them from the game screen. 
+
+Protocol
+
+MazePacket/GamePacket (Details on error handling can be found in following sections)
+When a client wants an event to occur, it will first broadcast a proposed Lamport clock timestamp for that event. Other clients will check this proposed clock and send an ACK if the clock is up to date, but DACK otherwise. After the broadcasting and receiving acknowledgements from other clients that its lamport clock is valid and can be used, the client shall broadcast a packet containing all information on the event to all clients including itself. When a client receives such event message, it sorts the messages by lamport clock and adds it to its event FIFO queue. When the event is extracted from the queue, it updates its game screen. 
+Each event packet shall include:
+client’s ID, Lamport clock timestamp, type of event (ex. left, quit, etc), event information (ex. point, direction, etc)
+
+Failure Handling
+
+All clients use heartbeats to check if a client is still online. A client shall ping all other clients every few seconds. If a client does not ping back, then it is assumed that that client failed and/or is disconnected. This event shall be broadcasted to all other existing members and the failed client shall be removed from the naming service. 
+
+Timing and Maintaining Consistency
+
+With each event, the client first sends the current Lamport clock timestamp and blocks until acknowledgements from all other clients are received to ensure consistency. Then, a packet with the event information will be broadcasted. This event packet will be received in a queue, which orders the events by Lamport clock time to ensure consistency in all clients.
+
+If the Lamport timestamp is outdated, the sender shall receive a disacknowledgement with the latest timestamp. The sender will then retry broadcasting with an updated Lamport clock timestamp. If two or more clients send out the same Lamport timestamp simultaneously, only the client with the lowest client ID will be acknowledged. 
+
+Abstract description of process behaviour
+
+Client and robots registers self to naming service and receive an ID
+The first client has control over robots. If this client quits or fails, the person with the next ID will take over robot control
+Client retrieves all clients from naming service
+Dynamic join by broadcasting self and requesting current port and hostname of all clients. It will then notify other clients, which will send their current avatar location.
+On key presses, client increments it’s lamport clock and then broadcasts it’s incremented lamport clock timestamp (ie. to maintain a global counter) 
+All other clients update their local lamport to 1+max and sends ACK or DACK
+Client blocks until all acknowledgments to the lamport timestamp are received
+Once acknowledgement received, it creates an event packet with the new lamport clock and broadcasts the packet
+All other clients update their console to reflect the requesting client’s move
+Client listener continually updates screen with packet events
+On a separate thread, a heartbeat handler checks all existing clients for failures
+If for any reason, two or more events are sent with the same Lamport clock time stamp, an order based on client ID (ID=1 precedes ID=2) will decide which event shall occur first.
+When quitting, client removes  self from naming service and notifies all clients 
+
+IMPLEMENTATION
 
 Running the game:
 1) compile server (at server/) and client (at mazewar/) with the make clean followed by the make command
