@@ -1,0 +1,38 @@
+Mazewar: Multiplayer
+Medhavin Vadhanasindhu 997812611
+Sanjana Kambalapally 999147873
+
+
+Running the game:
+1) compile server (at server/) and client (at mazewar/) with the make clean followed by the make command
+2) run the server in server/ with sh ./server.sh [port number]
+3) run Mazewar at mazewar with the command java Mazewar
+3.1) Follow UI prompt to connect to server and set up name. 
+3.2) Re-enter name if your name is already taken. The game will prompt you for this.
+
+Error checking capabilities:
+-Checks for duplicate names
+-Checks if a new joining client is born on top of another. The server will notify the client to provide a new location
+-Handles leavers. When a client exits the game (pressing q), the server un-registers it and tells all online clients to remove the client
+
+GamePacket Structure:
+-we have a message header (int type), which defines the type of message
+-we have a message key (int key), which defines they key that was pressed. This is normally associated with having the type be PACKET_STORE.
+
+
+Server Design:
+The server holds the most up to date location of all clients. It also uses this location to sync the new locations of client.
+It uses a global FIFO queue (called "fifo"). The server has 2 threads that handles these queues:
+	Thread 1: Reads from the FIFO queue and broadcasts the message in the queue to all registered clients
+	Thread 2: Writes to the FIFO queue and process message from client. 
+		It also creates and/or formats the packet to be broadcasted, before adding the packet to the FIFO queue
+
+Limitations:
+-Server does not recover packet loss
+-Server allows a client to dynamically join the game and play the game normally. However, the scoreboard may be inconsistent
+-Server assumes the kill sequence is not interrupted as allowed by Professor Amza. 
+ That is, if two clients fire at each other simultaneously or press fire at the same time, inconsistency MAY be present if atomicity violated
+ 
+Other notes:
+-added a structure called "location" to group the point and location of a client
+
