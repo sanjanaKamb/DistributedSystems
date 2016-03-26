@@ -1,0 +1,26 @@
+ECE419: Lab 4
+
+Running the solution:
+1) make the project
+2) start the ZooKeeper server
+- be sure to change the hostname and port of the ZooKeeper in the makefile
+3) Start the JobTracker: type make runJob. This server is the primary.
+3.1) Start another JobTracker: type make runJob. This server is the back up.
+4) Start the FileServer: type make runFile. This server is the primary.
+4.1) Start another FileServer: type make runFile. This server is the back up.
+5) Start the workers: type make runWorker
+5.1) Start more workers as desired
+6) Start the client: type make runClient
+
+Usage:
+Follow the screen prompt for client 
+1. For submitting a job request enter 'request <hash>'
+2. For querying status of a job enter 'query <hash>'
+Eg: request c463be62fd5252c7568d7bafd3cc4a55
+	query c463be62fd5252c7568d7bafd3cc4a55
+
+Failures:
+Failures of components are created by pressing ctrl+c to kill it.
+
+Dynamic component addition/removal:
+-Solution supports dynamic addition and removal of worker and backup servers.
