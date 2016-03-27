@@ -36,12 +36,10 @@ DESIGN DETAILS
 	Initialization (also happens when backup takes over failed primary):
 
 		Client: Identifies itself to the JobTracker and receives a client id (client_id). This is used 
-		to identify if a 
-		packet is intended to be delivered to the client.
+		to identify if a packet is intended to be delivered to the client.
 
 		Worker: Identifies itself to the JobTracker and receives a worker id (worker_id). This is used 
-		to identify the 
-		partition section that the worker is responsible for.
+		to identify the partition section that the worker is responsible for.
 
 	Operation (in order):
 		1. Client
