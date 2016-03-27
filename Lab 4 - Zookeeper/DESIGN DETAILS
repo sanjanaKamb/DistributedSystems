@@ -1,0 +1,190 @@
+DESIGN DETAILS
+
+1. Design Architecture *
+	Provide a general description of your framework design and its components
+
+	The system is composed of a client, JobTracker (Primary and Backup), Workers and the File Server 
+	(Primary and Backup).
+
+	Initialization (also happens when backup takes over failed primary):
+
+		Client: Identifies itself to the JobTracker and receives a client id (client_id). This is used 
+		to identify if a packet is intended to be delivered to the client.
+
+		Worker: Identifies itself to the JobTracker and receives a worker id (worker_id). This is used 
+		to identify the partition section that the worker is responsible for.
+
+	Operation (in order):
+		1. Client
+		-user inputs hash to client terminal
+		-the hash input is forwarded to jobtracker
+
+		2. JobTracker
+		-receives hash from client
+		-creates partition for each worker
+		-tags each partition with a partition ID and sends it to the worker
+		-adds jobs to the pending job queue (reply_collector)
+		-increases the job id count
+
+		3. Worker
+		-checks if the packet it receives is a partition with the ID matching the id of the worker 
+		thread (that is, 
+		checks if the received partition is for me)
+		-if partition is for the worker thread, it forwards the packet to the file server
+
+		4. File Server
+		- upon receiving packet from Worker, the file server reads the complete file lowercase.rand
+		- file server selects the appropriate range to partition and removes parts that are not 
+		requested by the worker based on the contents of the packet received from the worker (start 
+		and fin fields).
+		- file server attaches the selected partition to the packet and returns to the worker
+
+		5. Worker
+		-worker receives response from file server
+		-worker parses the partition provided by the file server, and searches it for the matching 
+		hash
+		-it returns the matching hash to JobTracker, or null if there is no match
+
+		6. JobTracker
+		-when receiving a reply from a worker, the JobTracker determines if:
+		a) password found: JobTracker sends reply to client immediately and remove the job from the
+		 job queue (reply_collector)
+		b) password not found: JobTracker decrements the number of pending job counts in the job 
+		queue and checks if all replies are received from all workers. If all replies from workers 
+		are received and the password is still not found, it replies to the client that the password 
+		is not found
+
+		7. Client
+		-receives packet from the JobTracker
+		-interprets the response and stores it locally
+		-if the user types a query, the client will check this local storage and return the job status
+		 and result (password found or not). Note that this local storage also serves as a cache, which
+		 will speed up the request processing time.
+
+2. Design Decisions *
+What design decisions have you made and why?
+
+	1) To have the job tracker connect to the worker or have the worker behave like a client and 
+	connected to the job server.
+	Decision: worker behave like client.
+	Reason: It simplifies dynamic worker joining. Also, the job tracker is informed when there is a 
+	new client joining.
+
+	2) Partition the data in the lowercase.rand file at the file server or worker
+	Decision: file server
+	Reasoning: 1) It reduces the workload of a worker, which already has to search for a matching password. 
+			   2) Partitioning the data at the file server before sending it to the workers will reduce 
+			   the size of the packets sent over the network.
+
+	3) Handling job queries on the client or the server
+	Decision: client
+	Reasoning: to easily recover from server failures. If the state of all jobs are stored on the server, 
+	when the primary server fails, the backup server must retrieve this data from the failed primary. 
+	In addition, since the client will remember all the responses to requests, it will be able to 
+	process repetitive requests faster (similar to a cache).
+
+	4) How to share and store in the system: in a local variable or in the packet.
+	Decision: Packet
+	Reasoning: Although this increases the size of a packet, storing information (such as the hash 
+	being searched etc.) in the packet allows a component in the system to learn of the job that it 
+	must process without relying on data stored in local variables. This simplifies failure recovery, 
+	as the backup server does not need to recover data in the primary.
+
+
+3. Handling Failures *
+List your anticipated failures and how your design handles them.
+
+	1) Failure at the JobTracker and File Server when not processing data
+	Fix: Primary/Backup servers. The backup server will replace the primary server on failure to 
+	ensure functionality. This is done using ZooKeeper and is invisible to the user. Upon detection 
+	of a failure of the primary JobTracker or File Server, the backup creates a new zookeeper node.
+	The client and workers are informed of this creation and re-connects to the backup services. 
+	Upon re-connection, the initialization of the clients and workers provide the new backup server 
+	with the information it needs to pick up where the primary left off.
+
+	2) Failure at File Server while the File Server (FS) is processing data
+	Fix: The worker tracks (with buffers) the packets sent to the file server that have not yet 
+	received a response. If the file server fails (notified by a ZooKeeper watch), all packets 
+	buffered are re-sent to the file server. 
+
+	3) Failure at JobTracker while the JobTracker is processing data
+	Fix: The clients tracks (with buffers) the packets sent to the JobTracker that have not yet received
+	a response. If the JobTracker fails (notified by a ZooKeeper watch), all packets buffered are re-sent
+	to the JobTracker . 
+
+	4) Failure at the worker thread while worker thread is processing data and not processing data
+	Fix: Upon detection of a failed worker thread, the JobTracker marks that worker’s partition ID as 
+	“dead”. That way, it will no longer send job requests to with that partition ID. If the worker is 
+	working on a partition when it dies, the JobTracker will re-partition all pending tasks (which 
+	includes the task that the dead worker was working on) and send the newly partitioned tasks to 
+	all workers that are still alive. This may create duplicated messages, but that is handled by 
+	the client.
+
+	5) Duplicated packets in system added by network or failures
+	Fix: packets are forwarded in the system from one component to another. So, if there is a duplicate, 
+	this duplicate will be forwarded all the way to the client. But, this will not be shown to the user 
+	because the client tracks the packets received from the system and duplicates are dropped.
+
+4. Scalability *
+Details regarding how you achieve scalability of your design
+
+	The design allows for concurrent job executions. Therefore, it will process faster and scale better 
+	with more worker machines. However, because the file data partition is sent over the network, low 
+	network bandwidth may slow the system down. In addition, high network latencies will slow down the 
+	net processing time, as multiple messages are forwarded throughout the system.
+
+	Increasing the number of backup servers will also deliver a more reliable service, as it is more likely 
+	that a primary server is online, thus packets are less likely to be lost or stalled. 
+
+	However, an increase in a number of concurrent clients may slow down the system if the clients submit
+	 more requests to the JobTracker. Although each request is processed concurrently, each worker 
+	 processes its partition serially. For example, request A will be split into smaller tasks, call 
+	 them A1, A2..An. Worker 1 is assigned A1 and works on it. But if request B comes in, it is split 
+	 into tasks B1, B2...Bn, with worker 1 assigned B1. However, worker 1 must complete A1 before processing 
+	 B1 and thus the completion of task B is delayed by that of A. Hence, if there are more requests sent 
+	 concurrently due to the increased number of clients, the wait time for each request will increase. 
+
+
+5. Concurrent Job Executions *
+Provide details on how you support concurrent job execution
+	Concurrent job execution is supported because the JobTracker allocates different partitions (sections) 
+	of the file for the workers to parse. This is done with job IDs and partition IDs to identify jobs and 
+	partitions. Because multiple parts of the file lowercase.rand are processed at once, the system 
+	concurrently executes jobs. The high level description of process is as follows:
+	1) When the server receives a request from the client, it creates a range for each partition and 
+	tag each range with a partition ID.
+	2) Information on the job id, range and partition id are placed in a packet and broadcasted
+	3) When a worker receives the broadcasted packet, it checks to see if the partition ID matches the 
+	work’s assigned partition ID (stored locally on the server).
+	4) If so, the worker requests its assigned partition (indicated by the start and finish range) from 
+	the file server and processes the assigned partition. There is concurrent execution as each worker 
+	handles its own partition of the file and runs in parallel and independent of other works.
+	5) The worker thread returns the result of the search of its own partition to the JobTracker
+	6) JobTracker collects all responses from worker threads, and responds to the client when all the 
+	workers have completed their concurrent data processing.
+
+
+Error Checking
+	Test set up: always start with 2 clients, 2 workers
+	P/B:
+	fail JT, check functionality (query with non existent hash, with existent hash)
+	fail FS, check functionality (query with non existent hash, with existent hash)
+
+	fail JT>fail FS, check functionality (query with non existent hash, with existent hash)
+	fail FS>fail JT, check functionality (query with non existent hash, with existent hash)
+
+	randomly reconnect FS/JT, check functionality (query with non existent hash, with existent hash)
+
+	Worker addition:
+	Dynamic add,
+	check functionality (request hash in new worker, request hash not in new addition)
+	Dynamic remove
+	    check functionality (request hash in removed worker, request hash not in removed worker)
+
+	Failure when:
+
+	JT working
+
+	worker working
+
+	FS working
